@@ -1,5 +1,4 @@
 import mysql.connector
-from geopy.distance import geodesic
 
 yhteys = mysql.connector.connect(
     host='127.0.0.1',
@@ -11,11 +10,3 @@ yhteys = mysql.connector.connect(
 )
 
 cursor = yhteys.cursor()
-
-def hae_koordinaatit(icao):
-    sql = "SELECT latitude_deg, longitude_deg FROM airport WHERE ident = %s"
-    cursor.execute(sql, (icao,))
-    tulos = cursor.fetchone()
-    if tulos:
-        return (float(tulos[0]), float(tulos[1]))
-    return None
