@@ -331,10 +331,11 @@ class DatabaseManager:
 
 
 # game_logic.py - Pelin logiikka
-from enum  Enum
+from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 import random
+
 
 # Margins
     MARGIN_LEFT = 230
@@ -903,5 +904,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nVirhe: {e}")
         import traceback
+
 
         traceback.print_exc()
