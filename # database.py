@@ -9,8 +9,6 @@ from typing import Optional
 import random
 pygame.init()
 screen = pygame.display.set_mode((1280, 720))
-clock = pygame.time.Clock()
-running = True
 
 
 class DatabaseManager:
@@ -909,5 +907,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nVirhe: {e}")
         import traceback
+
 
         traceback.print_exc()
