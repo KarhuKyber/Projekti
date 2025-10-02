@@ -1,6 +1,7 @@
 # database.py - MySQL-tietokantayhteydet ja kyselyt
 import mysql.connector
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime
 
 
 class DatabaseManager:
@@ -23,16 +24,262 @@ class DatabaseManager:
                 database=self.database
             )
             print("Yhteys tietokantaan muodostettu!")
+            self._create_tables()
             return self.connection
         except mysql.connector.Error as err:
             print(f"Virhe tietokantayhteydessä: {err}")
             return None
+
+    def _create_tables(self):
+        """Luo tarvittavat taulut jos niitä ei ole"""
+        kursori = self.connection.cursor()
+
+        try:
+            # Luo players-taulu
+            kursori.execute("""
+                            CREATE TABLE IF NOT EXISTS players
+                            (
+                                id
+                                INT
+                                AUTO_INCREMENT
+                                PRIMARY
+                                KEY,
+                                username
+                                VARCHAR
+                            (
+                                50
+                            ) UNIQUE NOT NULL,
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                                )
+                            """)
+
+            # Luo high_scores-taulu
+            kursori.execute("""
+                            CREATE TABLE IF NOT EXISTS high_scores
+                            (
+                                id
+                                INT
+                                AUTO_INCREMENT
+                                PRIMARY
+                                KEY,
+                                player_id
+                                INT
+                                NOT
+                                NULL,
+                                score
+                                INT
+                                NOT
+                                NULL,
+                                game_mode
+                                VARCHAR
+                            (
+                                20
+                            ) DEFAULT 'classic',
+                                played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                FOREIGN KEY
+                            (
+                                player_id
+                            ) REFERENCES players
+                            (
+                                id
+                            ) ON DELETE CASCADE
+                                )
+                            """)
+
+            self.connection.commit()
+            print("Taulut tarkistettu/luotu onnistuneesti!")
+
+        except mysql.connector.Error as err:
+            print(f"Virhe taulujen luonnissa: {err}")
+        finally:
+            kursori.close()
 
     def close(self):
         """Sulkee tietokantayhteyden"""
         if self.connection and self.connection.is_connected():
             self.connection.close()
             print("Tietokantayhteys suljettu.")
+
+    # KÄYTTÄJÄHALLINTA
+
+    def create_player(self, username: str) -> Optional[int]:
+        """Luo uuden pelaajan"""
+        kursori = self.connection.cursor()
+
+        try:
+            sql = "INSERT INTO players (username) VALUES (%s)"
+            kursori.execute(sql, (username,))
+            self.connection.commit()
+            return kursori.lastrowid
+        except mysql.connector.IntegrityError:
+            print(f"Käyttäjänimi '{username}' on jo olemassa!")
+            return None
+        except mysql.connector.Error as err:
+            print(f"Virhe pelaajan luonnissa: {err}")
+            return None
+        finally:
+            kursori.close()
+
+    def get_player_by_username(self, username: str) -> Optional[Dict]:
+        """Hakee pelaajan käyttäjänimellä"""
+        kursori = self.connection.cursor()
+
+        try:
+            sql = "SELECT id, username, created_at FROM players WHERE username = %s"
+            kursori.execute(sql, (username,))
+            rivi = kursori.fetchone()
+
+            if rivi:
+                return {
+                    'id': rivi[0],
+                    'username': rivi[1],
+                    'created_at': rivi[2]
+                }
+            return None
+
+        except mysql.connector.Error as err:
+            print(f"Virhe pelaajan haussa: {err}")
+            return None
+        finally:
+            kursori.close()
+
+    def get_or_create_player(self, username: str) -> Optional[int]:
+        """Hakee pelaajan tai luo uuden jos ei löydy"""
+        player = self.get_player_by_username(username)
+        if player:
+            return player['id']
+        return self.create_player(username)
+
+    # HIGH SCORE -HALLINTA
+
+    def save_score(self, player_id: int, score: int, game_mode: str = 'classic') -> bool:
+        """Tallentaa pelaajan pisteet"""
+        kursori = self.connection.cursor()
+
+        try:
+            sql = "INSERT INTO high_scores (player_id, score, game_mode) VALUES (%s, %s, %s)"
+            kursori.execute(sql, (player_id, score, game_mode))
+            self.connection.commit()
+            return True
+        except mysql.connector.Error as err:
+            print(f"Virhe pisteiden tallennuksessa: {err}")
+            return False
+        finally:
+            kursori.close()
+
+    def get_player_high_score(self, player_id: int, game_mode: str = 'classic') -> int:
+        """Hakee pelaajan parhaan tuloksen"""
+        kursori = self.connection.cursor()
+
+        try:
+            sql = """
+                  SELECT MAX(score)
+                  FROM high_scores
+                  WHERE player_id = %s \
+                    AND game_mode = %s \
+                  """
+            kursori.execute(sql, (player_id, game_mode))
+            rivi = kursori.fetchone()
+            return rivi[0] if rivi and rivi[0] is not None else 0
+        except mysql.connector.Error as err:
+            print(f"Virhe high scoren haussa: {err}")
+            return 0
+        finally:
+            kursori.close()
+
+    def get_player_statistics(self, player_id: int) -> Dict:
+        """Hakee pelaajan tilastot"""
+        kursori = self.connection.cursor()
+
+        try:
+            sql = """
+                  SELECT COUNT(*)   as games_played, \
+                         MAX(score) as best_score, \
+                         AVG(score) as avg_score, \
+                         MIN(score) as worst_score
+                  FROM high_scores
+                  WHERE player_id = %s \
+                  """
+            kursori.execute(sql, (player_id,))
+            rivi = kursori.fetchone()
+
+            if rivi:
+                return {
+                    'games_played': rivi[0] or 0,
+                    'best_score': rivi[1] or 0,
+                    'avg_score': round(rivi[2], 1) if rivi[2] else 0,
+                    'worst_score': rivi[3] or 0
+                }
+            return {'games_played': 0, 'best_score': 0, 'avg_score': 0, 'worst_score': 0}
+
+        except mysql.connector.Error as err:
+            print(f"Virhe tilastojen haussa: {err}")
+            return {'games_played': 0, 'best_score': 0, 'avg_score': 0, 'worst_score': 0}
+        finally:
+            kursori.close()
+
+    def get_top_scores(self, limit: int = 10, game_mode: str = 'classic') -> List[Dict]:
+        """Hakee parhaat tulokset"""
+        kursori = self.connection.cursor()
+
+        try:
+            sql = """
+                  SELECT p.username, h.score, h.played_at
+                  FROM high_scores h
+                           JOIN players p ON h.player_id = p.id
+                  WHERE h.game_mode = %s
+                  ORDER BY h.score DESC
+                      LIMIT %s \
+                  """
+            kursori.execute(sql, (game_mode, limit))
+            rivit = kursori.fetchall()
+
+            return [
+                {
+                    'username': rivi[0],
+                    'score': rivi[1],
+                    'played_at': rivi[2]
+                }
+                for rivi in rivit
+            ]
+
+        except mysql.connector.Error as err:
+            print(f"Virhe top scores -haussa: {err}")
+            return []
+        finally:
+            kursori.close()
+
+    def get_player_recent_games(self, player_id: int, limit: int = 5) -> List[Dict]:
+        """Hakee pelaajan viimeisimmät pelit"""
+        kursori = self.connection.cursor()
+
+        try:
+            sql = """
+                  SELECT score, game_mode, played_at
+                  FROM high_scores
+                  WHERE player_id = %s
+                  ORDER BY played_at DESC
+                      LIMIT %s \
+                  """
+            kursori.execute(sql, (player_id, limit))
+            rivit = kursori.fetchall()
+
+            return [
+                {
+                    'score': rivi[0],
+                    'game_mode': rivi[1],
+                    'played_at': rivi[2]
+                }
+                for rivi in rivit
+            ]
+
+        except mysql.connector.Error as err:
+            print(f"Virhe pelihistorian haussa: {err}")
+            return []
+        finally:
+            kursori.close()
+
+    # LENTOKENTTÄ- JA MAATIEDOT
 
     def get_random_airport(self, exclude_ids: List[int] = None) -> Optional[Dict]:
         """Hakee satunnaisen lentokentän"""
@@ -157,10 +404,6 @@ import random
 class QuestionType(Enum):
     """Kysymystyypit"""
     AIRPORT_ELEVATION = "elevation"
-    # Voit lisätä myöhemmin:
-    # AIRPORT_PASSENGERS = "passengers"
-    # COUNTRY_POPULATION = "population"
-    # COUNTRY_AREA = "area"
 
 
 class GameMode(Enum):
@@ -181,6 +424,8 @@ class GameState:
     game_over: bool = False
     high_score: int = 0
     game_mode: GameMode = GameMode.CLASSIC
+    player_id: Optional[int] = None
+    player_username: str = ""
 
 
 class GameEngine:
@@ -191,9 +436,17 @@ class GameEngine:
         self.state = GameState()
         self.used_ids = []
 
-    def start_new_game(self, game_mode: GameMode = GameMode.CLASSIC):
+    def start_new_game(self, player_id: int, username: str, game_mode: GameMode = GameMode.CLASSIC):
         """Aloittaa uuden pelin"""
-        self.state = GameState(game_mode=game_mode)
+        # Hae pelaajan ennätys
+        high_score = self.db.get_player_high_score(player_id, game_mode.value)
+
+        self.state = GameState(
+            game_mode=game_mode,
+            player_id=player_id,
+            player_username=username,
+            high_score=high_score
+        )
         self.used_ids = []
         self.state.question_type = self._select_question_type()
         self.state.current_item = self._get_next_item()
@@ -201,7 +454,6 @@ class GameEngine:
 
     def _select_question_type(self) -> QuestionType:
         """Valitsee satunnaisen kysymystyypin"""
-        # Tällä hetkellä vain lentokenttien korkeus
         return QuestionType.AIRPORT_ELEVATION
 
     def _get_next_item(self) -> Optional[Dict]:
@@ -212,7 +464,6 @@ class GameEngine:
                 self.used_ids.append(item['id'])
             return item
         else:
-            # Maiden kysymykset tulossa
             return self.db.get_random_country()
 
     def _get_value(self, item: Dict) -> float:
@@ -232,17 +483,13 @@ class GameEngine:
         return 0
 
     def make_guess(self, is_higher: bool) -> tuple[bool, str]:
-        """
-        Käsittelee pelaajan arvauksen
-        Returns: (oikein/väärin, viesti)
-        """
+        """Käsittelee pelaajan arvauksen"""
         if self.state.game_over:
             return False, "Peli on päättynyt!"
 
         current_value = self._get_value(self.state.current_item)
         next_value = self._get_value(self.state.next_item)
 
-        # Tarkista arvaus
         correct = (is_higher and next_value >= current_value) or \
                   (not is_higher and next_value <= current_value)
 
@@ -250,23 +497,33 @@ class GameEngine:
             self.state.score += 1
             message = f"Oikein! {self._format_item_name(self.state.next_item)}\nKorkeus: {int(next_value)} ft"
 
-            # Siirry seuraavaan
+            # Tarkista uusi ennätys
+            if self.state.score > self.state.high_score:
+                self.state.high_score = self.state.score
+                message += "\n🎉 UUSI ENNÄTYS! 🎉"
+
             self.state.current_item = self.state.next_item
             self.state.next_item = self._get_next_item()
 
-            # Vaihda kysymystyyppiä joka 10. pisteen kohdalla (tulevaisuudessa)
             if self.state.score % 10 == 0:
-                self.state.question_type = self._select_question_type()
-                message += f"\n\nHienoa! Jatketaan samalla kysymystyypillä: {self._get_question_description()}"
+                message += f"\n\nHienoa! {self.state.score} pistettä!"
         else:
             self.state.lives -= 1
             message = f"Väärin! {self._format_item_name(self.state.next_item)}\nKorkeus: {int(next_value)} ft"
 
             if self.state.lives <= 0:
                 self.state.game_over = True
-                if self.state.score > self.state.high_score:
-                    self.state.high_score = self.state.score
-                message += f"\n\n{'=' * 50}\nPELI PÄÄTTYI!\nLopullinen pistemäärä: {self.state.score}\n{'=' * 50}"
+                # Tallenna tulos tietokantaan
+                if self.state.player_id:
+                    self.db.save_score(
+                        self.state.player_id,
+                        self.state.score,
+                        self.state.game_mode.value
+                    )
+                message += f"\n\n{'=' * 50}\nPELI PÄÄTTYI!\n"
+                message += f"Pistemäärä: {self.state.score}\n"
+                message += f"Ennätyksesi: {self.state.high_score}\n"
+                message += f"{'=' * 50}"
 
         return correct, message
 
@@ -306,20 +563,118 @@ class GameEngine:
             'next_item': self._format_item_name(self.state.next_item),
             'question_type': self._get_question_description(),
             'game_over': self.state.game_over,
-            'high_score': self.state.high_score
+            'high_score': self.state.high_score,
+            'player_username': self.state.player_username
         }
 
 
-# main.py - Pääohjelma (konsoli-versio)
+# main.py - Pääohjelma
+def clear_screen():
+    """Tyhjentää konsolin (valinnainen)"""
+    import os
+    # Kommentoi pois jos et halua tyhjentää näyttöä
+    # os.system('cls' if os.name == 'nt' else 'clear')
+    pass
+
+
+def show_main_menu():
+    """Näyttää päävalikon"""
+    print("\n" + "=" * 60)
+    print("🎮 PÄÄVALIKKO 🎮")
+    print("=" * 60)
+    print("1. 🎯 Pelaa")
+    print("2. 📊 Omat tilastot")
+    print("3. 🏆 Pistetaulukko (Top 10)")
+    print("4. 👤 Vaihda käyttäjää")
+    print("5. ❌ Lopeta")
+    return input("\nValitse (1-5): ")
+
+
+def show_leaderboard(db: DatabaseManager):
+    """Näyttää pistetaulukon"""
+    print("\n" + "=" * 60)
+    print("🏆 PISTETAULUKKO - TOP 10 🏆")
+    print("=" * 60)
+
+    top_scores = db.get_top_scores(10)
+
+    if not top_scores:
+        print("Ei vielä tuloksia!")
+    else:
+        for i, score in enumerate(top_scores, 1):
+            date_str = score['played_at'].strftime('%d.%m.%Y %H:%M')
+            print(f"{i:2}. {score['username']:20} {score['score']:4} pistettä  ({date_str})")
+
+    input("\nPaina Enter palataksesi...")
+
+
+def show_player_stats(db: DatabaseManager, player_id: int, username: str):
+    """Näyttää pelaajan tilastot"""
+    print("\n" + "=" * 60)
+    print(f"📊 TILASTOT - {username}")
+    print("=" * 60)
+
+    stats = db.get_player_statistics(player_id)
+
+    print(f"\nPelatut pelit: {stats['games_played']}")
+    print(f"Paras tulos: {stats['best_score']}")
+    print(f"Keskiarvo: {stats['avg_score']}")
+    print(f"Huonoin tulos: {stats['worst_score']}")
+
+    print("\n" + "-" * 60)
+    print("VIIMEISIMMÄT PELIT:")
+    print("-" * 60)
+
+    recent = db.get_player_recent_games(player_id, 5)
+    if recent:
+        for game in recent:
+            date_str = game['played_at'].strftime('%d.%m.%Y %H:%M')
+            print(f"{game['score']:4} pistettä  ({date_str})")
+    else:
+        print("Ei vielä pelattuja pelejä!")
+
+    input("\nPaina Enter palataksesi...")
+
+
+def login_or_register(db: DatabaseManager) -> tuple[int, str]:
+    """Kirjautuminen tai rekisteröityminen"""
+    print("\n" + "=" * 60)
+    print("KIRJAUTUMINEN")
+    print("=" * 60)
+
+    while True:
+        username = input("\nAnna käyttäjänimesi (tai 'q' lopettaaksesi): ").strip()
+
+        if username.lower() == 'q':
+            return None, None
+
+        if not username:
+            print("Käyttäjänimi ei voi olla tyhjä!")
+            continue
+
+        if len(username) < 3:
+            print("Käyttäjänimen pitää olla vähintään 3 merkkiä!")
+            continue
+
+        player_id = db.get_or_create_player(username)
+
+        if player_id:
+            player = db.get_player_by_username(username)
+            if player:
+                print(f"\nTervetuloa takaisin, {username}!")
+                return player_id, username
+        else:
+            print("Virhe käyttäjän luonnissa. Yritä toista nimeä.")
+
+
 def main():
-    """Pääohjelma - yksinkertainen konsoli-versio"""
+    """Pääohjelma"""
 
     print("=" * 60)
     print("HIGHER OR LOWER - Lentokentät ja maat")
     print("=" * 60)
     print("\nYhdistetään tietokantaan...")
 
-    # Alusta tietokanta
     db = DatabaseManager(
         host="127.0.0.1",
         user="pythonUser",
@@ -329,61 +684,87 @@ def main():
 
     if not db.connect():
         print("\nVirhe: Tietokantayhteys epäonnistui!")
-        print("Tarkista että MySQL-palvelin on käynnissä ja tiedot ovat oikein.")
         return
 
-    # Luo pelimoottori
-    game = GameEngine(db)
-
-    print("\nArvaa, onko seuraava arvo HIGHER (suurempi) vai LOWER (pienempi)!")
-    print("Sinulla on 3 elämää. Onnea matkaan!\n")
-
-    # Aloita peli
-    game.start_new_game()
-
-    if not game.state.current_item or not game.state.next_item:
-        print("\nVirhe: Ei voitu hakea lentokenttätietoja!")
+    # Kirjautuminen
+    player_id, username = login_or_register(db)
+    if not player_id:
         db.close()
         return
 
-    while not game.state.game_over:
-        display = game.get_current_display()
+    game = GameEngine(db)
 
-        print("\n" + "-" * 60)
-        print(f"Pisteet: {display['score']} | Elämät: {'❤️ ' * display['lives']}")
-        print(f"Kysymystyyppi: {display['question_type']}")
-        print("-" * 60)
-        print(f"\nNykyinen: {display['current_item']}")
-        print(f"Korkeus: {display['current_value']} ft")
-        print(f"\nSeuraava: {display['next_item']}")
-        print(f"Korkeus: ???")
+    # Pääsilmukka
+    while True:
+        choice = show_main_menu()
 
-        # Kysy pelaajalta
-        while True:
-            choice = input("\nOnko seuraava HIGHER vai LOWER? (h/l) tai (q lopettaaksesi): ").lower()
-            if choice in ['h', 'l', 'q']:
+        if choice == '1':
+            # Pelaa
+            print("\nArvaa, onko seuraava arvo HIGHER (suurempi) vai LOWER (pienempi)!")
+            print("Sinulla on 3 elämää. Onnea matkaan!\n")
+            input("Paina Enter aloittaaksesi...")
+
+            game.start_new_game(player_id, username)
+
+            if not game.state.current_item or not game.state.next_item:
+                print("\nVirhe: Ei voitu hakea lentokenttätietoja!")
+                continue
+
+            while not game.state.game_over:
+                display = game.get_current_display()
+
+                print("\n" + "-" * 60)
+                print(
+                    f"Pelaaja: {display['player_username']} | Pisteet: {display['score']} | Ennätys: {display['high_score']} | Elämät: {'❤️ ' * display['lives']}")
+                print(f"Kysymystyyppi: {display['question_type']}")
+                print("-" * 60)
+                print(f"\nNykyinen: {display['current_item']}")
+                print(f"Korkeus: {display['current_value']} ft")
+                print(f"\nSeuraava: {display['next_item']}")
+                print(f"Korkeus: ???")
+
+                while True:
+                    choice = input("\nOnko seuraava HIGHER vai LOWER? (h/l) tai (q lopettaaksesi): ").lower()
+                    if choice in ['h', 'l', 'q']:
+                        break
+                    print("Virheellinen valinta!")
+
+                if choice == 'q':
+                    print("\nLopetetaan peli...")
+                    break
+
+                is_higher = choice == 'h'
+                correct, message = game.make_guess(is_higher)
+
+                print(f"\n{'✓' if correct else '✗'} {message}")
+
+                if not correct and not game.state.game_over:
+                    input("\nPaina Enter jatkaaksesi...")
+
+            if game.state.game_over:
+                input("\nPaina Enter palataksesi valikkoon...")
+
+        elif choice == '2':
+            # Omat tilastot
+            show_player_stats(db, player_id, username)
+
+        elif choice == '3':
+            # Pistetaulukko
+            show_leaderboard(db)
+
+        elif choice == '4':
+            # Vaihda käyttäjää
+            player_id, username = login_or_register(db)
+            if not player_id:
                 break
-            print("Virheellinen valinta! Syötä 'h' (higher), 'l' (lower) tai 'q' (quit)")
 
-        if choice == 'q':
-            print("\nLopetetaan peli...")
+        elif choice == '5':
+            # Lopeta
+            print("\nKiitos pelaamisesta! Näkemiin!")
             break
 
-        is_higher = choice == 'h'
-        correct, message = game.make_guess(is_higher)
-
-        print(f"\n{'✓' if correct else '✗'} {message}")
-
-        if not correct and not game.state.game_over:
-            input("\nPaina Enter jatkaaksesi...")
-
-    if game.state.game_over:
-        print("\n" + "=" * 60)
-        print(f"PELI PÄÄTTYI!")
-        print(f"Lopullinen pistemäärä: {game.state.score}")
-        if game.state.high_score > 0:
-            print(f"Parhain tulos tässä istunnossa: {game.state.high_score}")
-        print("=" * 60)
+        else:
+            print("Virheellinen valinta!")
 
     db.close()
 
@@ -395,3 +776,6 @@ if __name__ == "__main__":
         print("\n\nPeli keskeytetty. Näkemiin!")
     except Exception as e:
         print(f"\nVirhe: {e}")
+        import traceback
+
+        traceback.print_exc()
