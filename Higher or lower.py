@@ -24,75 +24,10 @@ class DatabaseManager:
                 database=self.database
             )
             print("Yhteys tietokantaan muodostettu!")
-            self._create_tables()
             return self.connection
         except mysql.connector.Error as err:
             print(f"Virhe tietokantayhteydessä: {err}")
             return None
-
-    def _create_tables(self):
-        """Luo tarvittavat taulut jos niitä ei ole"""
-        kursori = self.connection.cursor()
-
-        try:
-            # Luo players-taulu
-            kursori.execute("""
-                            CREATE TABLE IF NOT EXISTS players
-                            (
-                                id
-                                INT
-                                AUTO_INCREMENT
-                                PRIMARY
-                                KEY,
-                                username
-                                VARCHAR
-                            (
-                                50
-                            ) UNIQUE NOT NULL,
-                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                                )
-                            """)
-
-            # Luo high_scores-taulu
-            kursori.execute("""
-                            CREATE TABLE IF NOT EXISTS high_scores
-                            (
-                                id
-                                INT
-                                AUTO_INCREMENT
-                                PRIMARY
-                                KEY,
-                                player_id
-                                INT
-                                NOT
-                                NULL,
-                                score
-                                INT
-                                NOT
-                                NULL,
-                                game_mode
-                                VARCHAR
-                            (
-                                20
-                            ) DEFAULT 'classic',
-                                played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                                FOREIGN KEY
-                            (
-                                player_id
-                            ) REFERENCES players
-                            (
-                                id
-                            ) ON DELETE CASCADE
-                                )
-                            """)
-
-            self.connection.commit()
-            print("Taulut tarkistettu/luotu onnistuneesti!")
-
-        except mysql.connector.Error as err:
-            print(f"Virhe taulujen luonnissa: {err}")
-        finally:
-            kursori.close()
 
     def close(self):
         """Sulkee tietokantayhteyden"""
