@@ -757,8 +757,8 @@ def main():
 
     db = DatabaseManager(
         host="127.0.0.1",
-        user="pythonUser",
-        password="salasana",
+        user="root",
+        password="Python",
         database="flight_game"
     )
 
@@ -910,4 +910,5 @@ if __name__ == "__main__":
 
 
         traceback.print_exc()
+
 
