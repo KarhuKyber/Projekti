@@ -7,8 +7,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 import random
-pygame.init()
-screen = pygame.display.set_mode((1280, 720))
+
 
 
 class DatabaseManager:
@@ -910,5 +909,6 @@ if __name__ == "__main__":
 
 
         traceback.print_exc()
+
 
 
