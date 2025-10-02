@@ -14,7 +14,7 @@ screen = pygame.display.set_mode((1280, 720))
 class DatabaseManager:
     """Hallinnoi MySQL-tietokantayhteyksiä ja kyselyitä"""
 
-    def __init__(self, host="127.0.0.1", user="pythonUser", password="salasana", database="flight_game"):
+    def __init__(self, host="127.0.0.1", user="root", password="Python", database="flight_game"):
         self.host = host
         self.user = user
         self.password = password
@@ -910,3 +910,4 @@ if __name__ == "__main__":
 
 
         traceback.print_exc()
+
