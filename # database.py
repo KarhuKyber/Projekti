@@ -3,6 +3,14 @@ import mysql.connector
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import pygame
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
+import random
+pygame.init()
+screen = pygame.display.set_mode((1280, 720))
+clock = pygame.time.Clock()
+running = True
 
 
 class DatabaseManager:
@@ -331,10 +339,7 @@ class DatabaseManager:
 
 
 # game_logic.py - Pelin logiikka
-from enum import Enum
-from dataclasses import dataclass
-from typing import Optional
-import random
+
 
 
 # Margins
@@ -355,7 +360,7 @@ import random
     LIGHT_RED = (120, 0, 0)
  
     
-    player_pos = pygame.Vector2(screen.get_width() / 2, screen.get_height() / 2)
+    
     # Initializing PyGame
     pygame.init()
  
@@ -904,6 +909,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nVirhe: {e}")
         import traceback
-
 
         traceback.print_exc()
