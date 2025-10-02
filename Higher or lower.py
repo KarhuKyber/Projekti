@@ -361,6 +361,8 @@ class GameState:
     game_mode: GameMode = GameMode.CLASSIC
     player_id: Optional[int] = None
     player_username: str = ""
+    show_current_elevation: bool = False
+    first_guess: bool = True
 
 
 class GameEngine:
@@ -428,6 +430,11 @@ class GameEngine:
         correct = (is_higher and next_value >= current_value) or \
                   (not is_higher and next_value <= current_value)
 
+        # After first guess, always show the current elevation
+        if self.state.first_guess:
+            self.state.first_guess = False
+            self.state.show_current_elevation = True
+
         if correct:
             self.state.score += 1
             message = f"Oikein! {self._format_item_name(self.state.next_item)}\nKorkeus: {int(next_value)} ft"
@@ -437,6 +444,7 @@ class GameEngine:
                 self.state.high_score = self.state.score
                 message += "\n🎉 UUSI ENNÄTYS! 🎉"
 
+            # Move the correctly guessed airport to current position
             self.state.current_item = self.state.next_item
             self.state.next_item = self._get_next_item()
 
@@ -459,6 +467,9 @@ class GameEngine:
                 message += f"Pistemäärä: {self.state.score}\n"
                 message += f"Ennätyksesi: {self.state.high_score}\n"
                 message += f"{'=' * 50}"
+            else:
+                # Keep the current airport but get a new one to compare against
+                self.state.next_item = self._get_next_item()
 
         return correct, message
 
@@ -499,7 +510,9 @@ class GameEngine:
             'question_type': self._get_question_description(),
             'game_over': self.state.game_over,
             'high_score': self.state.high_score,
-            'player_username': self.state.player_username
+            'player_username': self.state.player_username,
+            'show_current_elevation': self.state.show_current_elevation,
+            'first_guess': self.state.first_guess
         }
 
 
@@ -654,7 +667,13 @@ def main():
                 print(f"Kysymystyyppi: {display['question_type']}")
                 print("-" * 60)
                 print(f"\nNykyinen: {display['current_item']}")
-                print(f"Korkeus: {display['current_value']} ft")
+
+                # Show current elevation only after first guess
+                if display['show_current_elevation']:
+                    print(f"Korkeus: {display['current_value']} ft")
+                else:
+                    print(f"Korkeus: ???")
+
                 print(f"\nSeuraava: {display['next_item']}")
                 print(f"Korkeus: ???")
 
