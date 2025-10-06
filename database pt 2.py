@@ -162,7 +162,7 @@ def play_game(db, player_id, username):
 
 
 def main():
-    db = DatabaseManager(host="127.0.0.1", user="pythonUser", password="salasana", database="flight_game")
+    db = DatabaseManager(host="127.0.0.1", user="root", password="Python", database="flight_game")
     if not db.connect():
         print("Tietokantayhteys epäonnistui!")
         return
@@ -189,3 +189,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
