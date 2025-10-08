@@ -335,6 +335,7 @@ class DatabaseManager:
 from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
+import time
 
 
 class QuestionType(Enum):
@@ -347,7 +348,7 @@ class GameMode(Enum):
     """Pelimoodit"""
     CLASSIC = "classic"
     SUDDEN_DEATH = "sudden_death"
-    CHALLENGE = "challenge"
+    TIME_ATTACK = "time_attack"
 
 
 @dataclass
@@ -365,6 +366,8 @@ class GameState:
     player_username: str = ""
     show_current_value: bool = False
     first_guess: bool = True
+    time_remaining: float = 0
+    start_time: float = 0
 
 
 class GameEngine:
@@ -382,8 +385,16 @@ class GameEngine:
         # Hae pelaajan ennätys
         high_score = self.db.get_player_high_score(player_id, game_mode.value)
 
-        # Aseta elämät pelimuodon mukaan
-        lives = 3 if game_mode == GameMode.CLASSIC else 1
+        # Aseta elämät ja aika pelimuodon mukaan
+        if game_mode == GameMode.CLASSIC:
+            lives = 3
+            time_remaining = 0
+        elif game_mode == GameMode.SUDDEN_DEATH:
+            lives = 1
+            time_remaining = 0
+        else:  # TIME_ATTACK
+            lives = 1
+            time_remaining = 60.0  # 60 sekuntia aikaa
 
         self.state = GameState(
             game_mode=game_mode,
@@ -391,7 +402,9 @@ class GameEngine:
             player_username=username,
             high_score=high_score,
             question_type=question_type,
-            lives=lives
+            lives=lives,
+            time_remaining=time_remaining,
+            start_time=time.time() if game_mode == GameMode.TIME_ATTACK else 0
         )
         self.used_ids = []
         self.used_country_codes = []
@@ -435,10 +448,33 @@ class GameEngine:
 
         return 0
 
+    def update_time(self):
+        """Päivittää jäljellä olevan ajan (vain time attack -tilassa)"""
+        if self.state.game_mode == GameMode.TIME_ATTACK and not self.state.game_over:
+            elapsed = time.time() - self.state.start_time
+            self.state.time_remaining = max(0, 60.0 - elapsed)
+
+            if self.state.time_remaining <= 0:
+                self.state.game_over = True
+                # Tallenna tulos tietokantaan
+                if self.state.player_id:
+                    self.db.save_score(
+                        self.state.player_id,
+                        self.state.score,
+                        self.state.game_mode.value
+                    )
+                return True  # Aika loppui
+        return False
+
     def make_guess(self, is_higher: bool) -> tuple[bool, str]:
         """Käsittelee pelaajan arvauksen"""
         if self.state.game_over:
             return False, "Peli on päättynyt!"
+
+        # Tarkista aika (time attack -tilassa)
+        if self.state.game_mode == GameMode.TIME_ATTACK:
+            if self.update_time():
+                return False, "Aika loppui!"
 
         current_value = self._get_value(self.state.current_item)
         next_value = self._get_value(self.state.next_item)
@@ -483,6 +519,8 @@ class GameEngine:
                 message += f"Pistemäärä: {self.state.score}\n"
                 if self.state.game_mode == GameMode.SUDDEN_DEATH:
                     message += f"Äkkikuolema-tila: Yksi virhe riitti!\n"
+                elif self.state.game_mode == GameMode.TIME_ATTACK:
+                    message += f"Aikaa jäljellä: {self.state.time_remaining:.1f}s\n"
                 message += f"Ennätyksesi: {self.state.high_score}\n"
                 message += f"{'=' * 50}"
             else:
@@ -529,6 +567,10 @@ class GameEngine:
         """Palauttaa näytettävät tiedot"""
         current_value = int(self._get_value(self.state.current_item))
 
+        # Päivitä aika time attack -tilassa
+        if self.state.game_mode == GameMode.TIME_ATTACK:
+            self.update_time()
+
         return {
             'score': self.state.score,
             'lives': self.state.lives,
@@ -542,11 +584,15 @@ class GameEngine:
             'player_username': self.state.player_username,
             'show_current_value': self.state.show_current_value,
             'first_guess': self.state.first_guess,
-            'game_mode': self.state.game_mode
+            'game_mode': self.state.game_mode,
+            'time_remaining': self.state.time_remaining
         }
 
 
 # main.py - Pääohjelma
+import time
+
+
 def clear_screen():
     """Tyhjentää konsolin (valinnainen)"""
     # Kommentoi pois jos et halua tyhjentää näyttöä
@@ -563,13 +609,15 @@ def show_game_mode_menu():
     print("   - 3 elämää, voit tehdä 2 virhettä")
     print("2. Äkkikuolema")
     print("   - 1 elämä, yksi virhe päättää pelin!")
-    print("3. Takaisin päävalikkoon")
+    print("3. Aikaraja (Time Attack)")
+    print("   - 1 elämä, 60 sekuntia aikaa!")
+    print("4. Takaisin päävalikkoon")
 
     while True:
-        choice = input("\nValitse (1-3): ")
-        if choice in ['1', '2', '3']:
+        choice = input("\nValitse (1-4): ")
+        if choice in ['1', '2', '3', '4']:
             return choice
-        print("Virheellinen valinta! Valitse 1, 2 tai 3.")
+        print("Virheellinen valinta! Valitse 1, 2, 3 tai 4.")
 
 
 def show_question_type_menu():
@@ -605,7 +653,12 @@ def show_main_menu():
 
 def show_leaderboard(db: DatabaseManager, game_mode: str = 'classic'):
     """Näyttää pistetaulukon"""
-    mode_name = "Klassinen" if game_mode == 'classic' else "Äkkikuolema"
+    mode_names = {
+        'classic': 'Klassinen',
+        'sudden_death': 'Äkkikuolema',
+        'time_attack': 'Aikaraja'
+    }
+    mode_name = mode_names.get(game_mode, game_mode)
 
     print("\n" + "=" * 60)
     print(f" PISTETAULUKKO - TOP 10 ({mode_name}) ")
@@ -643,7 +696,12 @@ def nayta_pelaajan_tilastot(db: DatabaseManager, player_id: int, username: str):
     recent = db.get_player_recent_games(player_id, 5)
     if recent:
         for game in recent:
-            mode_name = "Klassinen" if game['game_mode'] == 'classic' else "Äkkikuolema"
+            mode_names = {
+                'classic': 'Klassinen',
+                'sudden_death': 'Äkkikuolema',
+                'time_attack': 'Aikaraja'
+            }
+            mode_name = mode_names.get(game['game_mode'], game['game_mode'])
             date_str = game['played_at'].strftime('%d.%m.%Y %H:%M')
             print(f"{game['score']:4} pistettä  ({mode_name})  ({date_str})")
     else:
@@ -726,9 +784,12 @@ def main():
                     game_mode = GameMode.SUDDEN_DEATH
                     break
                 elif game_mode_choice == '3':
+                    game_mode = GameMode.TIME_ATTACK
+                    break
+                elif game_mode_choice == '4':
                     break
 
-            if game_mode_choice == '3':
+            if game_mode_choice == '4':
                 continue  # Takaisin päävalikkoon
 
             # Kysymystyypin valinta
@@ -759,10 +820,14 @@ def main():
                 print("Klassinen tila - 3 elämää")
                 print("Arvaa, onko seuraava arvo HIGHER (suurempi) vai LOWER (pienempi)!")
                 print("Sinulla on 3 elämää. Onnea matkaan!\n")
-            else:
+            elif game_mode == GameMode.SUDDEN_DEATH:
                 print("ÄKKIKUOLEMA - 1 elämä!")
                 print("Arvaa, onko seuraava arvo HIGHER (suurempi) vai LOWER (pienempi)!")
                 print("Yksi virhe päättää pelin! Onnea matkaan!\n")
+            else:  # TIME_ATTACK
+                print("AIKARAJA - 60 sekuntia!")
+                print("Arvaa, onko seuraava arvo HIGHER (suurempi) vai LOWER (pienempi)!")
+                print("1 elämä, 60 sekuntia aikaa! Onnea matkaan!\n")
 
             input("Paina Enter aloittaaksesi...")
 
@@ -776,11 +841,21 @@ def main():
                 display = game.get_current_display()
 
                 print("\n" + "-" * 60)
-                mode_text = "Klassinen" if display['game_mode'] == GameMode.CLASSIC else "Äkkikuolema"
-                lives_display = '❤️' * display['lives'] if display['game_mode'] == GameMode.CLASSIC else '💀'
+                mode_text = "Klassinen" if display['game_mode'] == GameMode.CLASSIC else "Äkkikuolema" if display[
+                                                                                                              'game_mode'] == GameMode.SUDDEN_DEATH else "Aikaraja"
+
+                if display['game_mode'] == GameMode.CLASSIC:
+                    lives_display = '❤️' * display['lives']
+                elif display['game_mode'] == GameMode.SUDDEN_DEATH:
+                    lives_display = '💀'
+                else:  # TIME_ATTACK
+                    lives_display = '⏰'
+
+                time_display = f" | Aikaa: {display['time_remaining']:.1f}s" if display[
+                                                                                    'game_mode'] == GameMode.TIME_ATTACK else ""
 
                 print(
-                    f"Pelaaja: {display['player_username']} | Pisteet: {display['score']} | Ennätys: {display['high_score']} | Elämät: {lives_display} ({mode_text})")
+                    f"Pelaaja: {display['player_username']} | Pisteet: {display['score']} | Ennätys: {display['high_score']} | Elämät: {lives_display} ({mode_text}){time_display}")
                 print(f"Kysymystyyppi: {display['question_type']}")
                 print("-" * 60)
                 print(f"\nNykyinen: {display['current_item']}")
@@ -815,10 +890,16 @@ def main():
 
                 print(f"\n{'✓' if correct else '✗'} {message}")
 
+                # Time attack -tilassa aika voi loppua kesken
+                if game.state.game_over and game.state.game_mode == GameMode.TIME_ATTACK and game.state.time_remaining <= 0:
+                    print(f"\n⏰ AIKA LOPPUI! Saavutit {game.state.score} pistettä!")
+                    input("\nPaina Enter palataksesi valikkoon...")
+                    break
+
                 if not correct and not game.state.game_over:
                     input("\nPaina Enter jatkaaksesi...")
 
-            if game.state.game_over:
+            if game.state.game_over and game.state.game_mode != GameMode.TIME_ATTACK:
                 input("\nPaina Enter palataksesi valikkoon...")
 
         elif choice == '2':
@@ -830,12 +911,15 @@ def main():
             print("\nValitse pistetaulukon pelimuoto:")
             print("1. Klassinen")
             print("2. Äkkikuolema")
-            leaderboard_choice = input("\nValitse (1-2) tai Enter palataksesi: ")
+            print("3. Aikaraja")
+            leaderboard_choice = input("\nValitse (1-3) tai Enter palataksesi: ")
 
             if leaderboard_choice == '1':
                 show_leaderboard(db, 'classic')
             elif leaderboard_choice == '2':
                 show_leaderboard(db, 'sudden_death')
+            elif leaderboard_choice == '3':
+                show_leaderboard(db, 'time_attack')
             else:
                 continue
 
